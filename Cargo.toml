@@ -1,0 +1,10 @@
+[package]
+name = "komotray"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+komorebi-client = { git = "https://github.com/LGUG2Z/komorebi", tag = "v0.1.28"}
+serde_json = "1.0.122"
+tray-icon = { version = "0.14.3", default-features = false }
+uds_windows = "1.1.0"
