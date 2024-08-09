@@ -1,7 +1,7 @@
 [package]
 name = "komotray"
 authors = ["Joshua Park <joshuprk@gmail.com>"]
-description = "Simple and lightweight tray icon which shows the current workspace for the Komorebi window manager"
+description = "Simple and lightweight tray icon that shows the current workspace for the Komorebi window manager"
 version = "0.1.0"
 edition = "2021"
 

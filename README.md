@@ -1,6 +1,6 @@
 # komotray
 
-Simple and lightweight tray icon which shows the current workspace for the Komorebi window manager.
+Simple and lightweight tray icon that shows the current workspace for the Komorebi window manager.
 
 ![](assets/demo.png)
 
