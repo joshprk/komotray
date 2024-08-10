@@ -89,7 +89,9 @@ impl IconCache {
 
                 Some((name, icon))
             })
-            .for_each(|(name, icon): (String, Icon)| { inner.insert(name, icon); });
+            .for_each(|(name, icon): (String, Icon)| {
+                inner.insert(name, icon);
+            });
 
         Self { inner }
     }
