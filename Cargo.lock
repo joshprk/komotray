@@ -1217,7 +1217,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tray-icon",
- "uds_windows",
 ]
 
 [[package]]

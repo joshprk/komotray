@@ -3,56 +3,17 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::io::BufRead;
 use std::io::BufReader;
+use std::io::Read;
 use std::time::Duration;
 
 use komorebi_client::Notification;
+use komorebi_client::SocketMessage;
 use tokio::time;
 use tray_icon::menu::Menu;
-use tray_icon::menu::MenuEvent;
-use tray_icon::menu::MenuItemBuilder;
 use tray_icon::Icon;
 use tray_icon::TrayIcon;
 use tray_icon::TrayIconBuilder;
-use uds_windows::UnixListener;
-use uds_windows::UnixStream;
-
-struct Tray {
-    tray: TrayIcon,
-}
-
-impl Tray {
-    pub fn new() -> Self {
-        let menu = Self::create_menu();
-        let tray = TrayIconBuilder::new()
-            .with_tooltip("komotray")
-            .with_menu(Box::new(menu))
-            .build()
-            .unwrap();
-        
-        Self { tray }
-    }
-
-    fn create_menu() -> Menu {
-        let exit_item = MenuItemBuilder::new()
-            .id("exit".into())
-            .enabled(true)
-            .text("Exit Tray")
-            .build();
-
-        let menu = Menu::new();
-        let _ = menu.append_items(&[
-            &exit_item
-        ]);
-
-        menu
-    }
-
-    pub fn set_icon(&self, icon: Icon) -> Result<(), tray_icon::Error> {
-        self.tray.set_icon(Some(icon))
-    }
-}
 
 struct IconCache {
     inner: HashMap<String, Icon>
@@ -101,134 +62,105 @@ impl IconCache {
     }
 }
 
-struct Connection {
-    inner: UnixListener,
-    connected: bool,
+struct Tray {
+    inner: TrayIcon
 }
 
-impl Connection {
-    pub async fn new() -> Self {
-        Self {
-            inner: Self::connect().await,
-            connected: true,
-        }
+impl Tray {
+    pub fn new(default_icon: Icon) -> Self {
+        let inner = TrayIconBuilder::new()
+            .with_tooltip(env!("CARGO_PKG_NAME"))
+            .with_icon(default_icon)
+            .with_menu(Self::create_menu())
+            .build()
+            .expect("failed to build tray icon");
+
+        Self { inner }
     }
 
-    async fn connect() -> UnixListener {
-        let timeout = Duration::from_secs(1);
-        let mut interval = time::interval(timeout);
-        loop {
-            let Some(socket) = Self::try_connect() else {
-                interval.tick().await;
-                continue
-            };
-
-            break socket
-        }
+    fn create_menu() -> Box<Menu> {
+        Box::new(Menu::new())
     }
 
-    fn try_connect() -> Option<UnixListener> {
-        komorebi_client::subscribe("komotray").ok()
-    }
-}
-
-impl Iterator for Connection {
-    type Item = Option<UnixStream>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let stream = self.inner
-            .incoming()
-            .filter_map(|res| res.ok())
-            .next();
-
-        if stream.is_none() {
-            if let Some(socket) = Self::try_connect() {
-                self.inner = socket;
-                self.connected = true;
-            }
-
-            None
-        } else if !self.connected {
-            self.connected = true;
-
-            Some(None)
-        } else {
-            Some(stream)
-        }
+    pub fn set_icon(&self, icon: Icon) {
+        let _ = self.inner.set_icon(Some(icon));
     }
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let tray = Tray::new();
     let cache = IconCache::new();
-    let connection = Connection::new().await;
+    let pause_icon = cache
+        .get("pause")
+        .expect("pause icon not found");
 
-    let tray_handler = async {
-        let event = MenuEvent::receiver();
-        let mut interval = time::interval(Duration::from_micros(100));
-        loop {
-            if let Ok(menu_event) = event.try_recv() {
-                match menu_event.id.as_ref() {
-                    "exit"  => std::process::exit(0),
-                    _       => unreachable!(),
-                }
-            }
+    let tray = Tray::new(pause_icon.clone());
 
-            interval.tick().await;
-        }
+    let tray_loop = async {
+        // loop {}
     };
 
-    let icon_handler = async {
-        for data in connection {
-            let set_paused = || {
-                if let Some(icon) = cache.get("pause") {
-                    let _ = tray.set_icon(icon);
-                }
-            };
+    let event_loop = async {
+        let socket = komorebi_client::subscribe(env!("CARGO_PKG_NAME"))
+            .unwrap();
 
-            let Some(data) = data else {
-                set_paused();
+        for data in socket.incoming() {
+            let Ok(data) = data else {
+                dbg!(data.unwrap_err());
                 continue
             };
 
-            let reader = BufReader::new(data);
+            let mut buffer = Vec::new();
+            let mut reader = BufReader::new(data);
 
-            for line in reader.lines().flatten() {
-                let Ok(json) = serde_json::from_str::<Notification>(&line) else {
+            if matches!(reader.read_to_end(&mut buffer), Ok(0)) {
+                let timeout = Duration::from_secs(1);
+                let mut interval = time::interval(timeout);
+                let msg = SocketMessage::AddSubscriberSocket(env!("CARGO_PKG_NAME").to_string());
+                
+                tray.set_icon(pause_icon.clone());
+
+                while komorebi_client::send_message(&msg).is_err() {
+                    interval.tick().await;
+                }
+            }
+
+            dbg!(&buffer);
+
+            let Ok(json) = serde_json::from_str::<Notification>(&String::from_utf8(buffer).unwrap()) else {
+                continue
+            };
+
+            let monitor_idx = json.state.monitors.focused_idx();
+            let workspace_idx = {
+                let Some(monitor) = json.state.monitors.focused() else {
+                    tray.set_icon(pause_icon.clone());
                     continue
                 };
+                monitor.focused_workspace_idx()
+            };
 
-                let monitor_idx = json.state.monitors.focused_idx();
-                let workspace_idx = {
-                    let Some(focused_monitor) = json.state.monitors.focused() else {
-                        set_paused();
-                        continue
-                    };
+            if json.state.is_paused
+                || !(0..2).contains(&monitor_idx) 
+                || !(0..9).contains(&workspace_idx)
+            {
+                tray.set_icon(pause_icon.clone());
+                continue
+            }
 
-                    focused_monitor.focused_workspace_idx()
-                };
+            let icon_name = format!(
+                "{}-{}",
+                workspace_idx + 1,
+                monitor_idx + 1,
+            );
 
-                if json.state.is_paused 
-                    || !(0..2).contains(&monitor_idx) 
-                    || !(0..9).contains(&workspace_idx) 
-                {
-                    set_paused();
-                    continue
-                }
-
-                let img_name = format!(
-                    "{}-{}",
-                    workspace_idx + 1,
-                    monitor_idx + 1
-                );
-
-                if let Some(icon) = cache.get(img_name.as_str()) {
-                    let _ = tray.set_icon(icon);
-                }
+            if let Some(icon) = cache.get(&icon_name) {
+                tray.set_icon(icon);
+            } else {
+                tray.set_icon(pause_icon.clone()); 
             }
         }
     };
 
-    tokio::join!(tray_handler, icon_handler);
+    tokio::join!(tray_loop, event_loop);
 }
