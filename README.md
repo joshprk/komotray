@@ -1,5 +1,9 @@
 # komotray
 
+> [!NOTE]
+> I don't use Windows anymore, and use NixOS. If anyone would like to maintain this project,
+> please feel free to contact me by commenting on issue [#2](https://github.com/joshprk/komotray/issues/2).
+
 Simple and lightweight tray icon that shows the current workspace for the [Komorebi window manager](https://github.com/LGUG2Z/komorebi/).
 
 ![](assets/demo.png)
